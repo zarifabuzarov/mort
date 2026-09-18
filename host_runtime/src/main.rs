@@ -1,3 +1,5 @@
+mod state;
+mod utils;
 mod files;
 mod console;
 mod process;
@@ -7,12 +9,13 @@ mod env_vars;
 mod network;
 
 use wasmtime::*;
+use crate::state::HostState;
 
 fn main() -> Result<()> {
     println!("[Runtime] Запуск...");
 
     let engine = Engine::default();
-    let mut store = Store::new(&engine, ());
+    let mut store = Store::new(&engine, HostState::new());
     let mut linker = Linker::new(&engine);
 
     files::register_files_api(&mut linker)?;

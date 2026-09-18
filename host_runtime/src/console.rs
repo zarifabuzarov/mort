@@ -1,9 +1,10 @@
 use wasmtime::*;
 use std::io::{self, BufRead};
+use crate::state::HostState;
 
-pub fn register_console_api(linker: &mut Linker<()>) -> Result<()> {
+pub fn register_console_api(linker: &mut Linker<HostState>) -> Result<()>{
     
-    linker.func_wrap("env", "host_print", |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
+    linker.func_wrap("env", "host_print", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| {
         if let Some(Extern::Memory(mem)) = caller.get_export("memory") {
             let data = mem.data(&caller);
             let start = ptr as usize;
@@ -20,7 +21,7 @@ pub fn register_console_api(linker: &mut Linker<()>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_read_line",
-        |mut caller: Caller<'_, ()>, out_ptr: u32, out_max_len: u32| -> u32 {
+        |mut caller: Caller<'_, HostState>, out_ptr: u32, out_max_len: u32| -> u32 {
             let mut input = String::new();
             let stdin = io::stdin();
             if stdin.lock().read_line(&mut input).is_ok() {

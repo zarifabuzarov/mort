@@ -1,12 +1,11 @@
+#![allow(dead_code)]
 use std::str;
+
 
 // Низкоуровневые импорты сидят внутри SDK и скрыты от разработчика
 #[link(wasm_import_module = "env")]
 extern "C" {
     fn host_print(ptr: *const u8, len: usize);
-    fn host_read_file(path_ptr: *const u8, path_len: usize, buf_ptr: *mut u8, buf_max_len: usize) -> i32;
-    fn host_write_file(path_ptr: *const u8, path_len: usize, data_ptr: *const u8, data_len: usize) -> i32;
-    fn host_append_file(path_ptr: *const u8, path_len: usize, data_ptr: *const u8, data_len: usize) -> i32;
     fn host_sleep(mls: u64);
     fn host_random_u32() -> u32;
     fn host_now_unix() -> u64;
@@ -16,6 +15,20 @@ extern "C" {
     fn host_exit(code: i32) -> !;
     fn host_http_get(url_ptr: *const u8, url_len: usize, out_ptr: *mut u8, out_max_len: usize) -> u32;
     fn host_read_line(out_ptr: *mut u8, max_len: usize) -> u32;
+
+    fn host_open_file(path_ptr: *const u8, path_len: usize, mode: i32) -> i32;
+    fn host_read_file(fd: i32, buf_ptr: *mut u8, buf_len: usize) -> i32;
+    fn host_write_file(fd: i32, data_ptr: *const u8, data_len: usize) -> i32;
+    fn host_close_file(fd: i32) -> i32;
+
+    fn host_path_exists(ptr: *const u8, len: usize) -> i32;
+    fn host_path_is_file(ptr: *const u8, len: usize) -> i32;
+    fn host_path_is_dir(ptr: *const u8, len: usize) -> i32;
+    fn host_make_file(ptr: *const u8, len: usize) -> i32;
+    fn host_make_dir(ptr: *const u8, len: usize, recursive: i32) -> i32;
+    fn host_remove_file(ptr: *const u8, len: usize) -> i32;
+    fn host_remove_dir(ptr: *const u8, len: usize, recursive: i32) -> i32;
+    fn host_list_dir(path_ptr: *const u8, path_len: usize, out_ptr: *mut u8, max_len: usize) -> i32;
 }
 
 // --- Безопасные абстракции ---
@@ -42,27 +55,79 @@ pub fn read_line() -> String {
     }
 }
 
-#[inline(always)]
-pub fn write_file(path: &str, data: &str) -> bool {
-    unsafe { host_write_file(path.as_ptr(), path.len(), data.as_ptr(), data.len()) == 0 }
+pub struct FileHandle {
+    fd: i32,
 }
 
-#[inline(always)]
-pub fn append_file(path: &str, data: &str) -> bool {
-    unsafe { host_append_file(path.as_ptr(), path.len(), data.as_ptr(), data.len()) == 0 }
-}
-
-#[inline(always)]
-pub fn read_file(path: &str) -> Result<String, ()> {
-    let mut buffer = [0u8; 4096];
-    let bytes_read = unsafe {
-        host_read_file(path.as_ptr(), path.len(), buffer.as_mut_ptr(), buffer.len())
-    };
-    if bytes_read >= 0 {
-        Ok(String::from_utf8_lossy(&buffer[..bytes_read as usize]).to_string())
-    } else {
-        Err(())
+impl FileHandle {
+    pub fn open_read(path: &str) -> Result<Self, ()> {
+        let fd = unsafe { host_open_file(path.as_ptr(), path.len(), 0) };
+        if fd >= 0 { Ok(Self { fd }) } else { Err(()) }
     }
+
+    pub fn create_write(path: &str) -> Result<Self, ()> {
+        let fd = unsafe { host_open_file(path.as_ptr(), path.len(), 1) };
+        if fd >= 0 { Ok(Self { fd }) } else { Err(()) }
+    }
+
+    pub fn open_append(path: &str) -> Result<Self, ()> {
+        let fd = unsafe { host_open_file(path.as_ptr(), path.len(), 2) };
+        if fd >= 0 { Ok(Self { fd }) } else { Err(()) }
+    }
+
+    pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, ()> {
+        let res = unsafe { host_read_file(self.fd, buf.as_mut_ptr(), buf.len()) };
+        if res >= 0 { Ok(res as usize) } else { Err(()) }
+    }
+
+    pub fn write(&mut self, data: &[u8]) -> Result<usize, ()> {
+        let res = unsafe { host_write_file(self.fd, data.as_ptr(), data.len()) };
+        if res >= 0 { Ok(res as usize) } else { Err(()) }
+    }
+}
+
+impl Drop for FileHandle {
+    fn drop(&mut self) {
+        unsafe { host_close_file(self.fd); }
+    }
+}
+
+pub fn path_exists(path: &str) -> bool {
+    unsafe { host_path_exists(path.as_ptr(), path.len()) == 1 }
+}
+
+pub fn is_file(path: &str) -> bool {
+    unsafe { host_path_is_file(path.as_ptr(), path.len()) == 1 }
+}
+
+pub fn is_dir(path: &str) -> bool {
+    unsafe { host_path_is_dir(path.as_ptr(), path.len()) == 1 }
+}
+
+pub fn make_file(path: &str) -> bool {
+    unsafe { host_make_file(path.as_ptr(), path.len()) == 0 }
+}
+
+pub fn make_dir(path: &str, recursive: bool) -> bool {
+    unsafe { host_make_dir(path.as_ptr(), path.len(), if recursive { 1 } else { 0 }) == 0 }
+}
+
+pub fn remove_file(path: &str) -> bool {
+    unsafe { host_remove_file(path.as_ptr(), path.len()) == 0 }
+}
+
+pub fn remove_dir(path: &str, recursive: bool) -> bool {
+    unsafe { host_remove_dir(path.as_ptr(), path.len(), if recursive { 1 } else { 0 }) == 0 }
+}
+
+pub fn list_dir(path: &str) -> Result<Vec<String>, ()> {
+    let mut buf = [0u8; 4096];
+    let len = unsafe { host_list_dir(path.as_ptr(), path.len(), buf.as_mut_ptr(), buf.len()) };
+    if len < 0 {
+        return Err(());
+    }
+    let s = String::from_utf8_lossy(&buf[..len as usize]);
+    Ok(s.lines().map(|line| line.to_string()).collect())
 }
 
 #[inline(always)]

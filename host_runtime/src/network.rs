@@ -1,11 +1,12 @@
 use wasmtime::*;
+use crate::state::HostState;
 
-pub fn register_network_api(linker: &mut Linker<()>) -> Result<()> {
+pub fn register_network_api(linker: &mut Linker<HostState>) -> Result<()> {
     // host_http_get(url_ptr, url_len, out_ptr, out_max_len) -> u32
     linker.func_wrap(
         "env",
         "host_http_get",
-        |mut caller: Caller<'_, ()>, url_ptr: u32, url_len: u32, out_ptr: u32, out_max_len: u32| -> u32 {
+        |mut caller: Caller<'_, HostState>, url_ptr: u32, url_len: u32, out_ptr: u32, out_max_len: u32| -> u32 {
             let memory = match caller.get_export("memory") {
                 Some(Extern::Memory(mem)) => mem,
                 _ => return 0,

@@ -3,18 +3,19 @@ use sdk::*;
 
 #[no_mangle]
 pub extern "C" fn start() {
-    let file_path = "test_run.txt";
+    if let Ok(mut file) = FileHandle::create_write("test_run.txt") {
+        file.write(b"Chunk 1...\n").ok();
+        file.write(b"Chunk 2...\n").ok();
+    }
 
-    // 1. Работа с файлами
-    write_file(file_path, "1. Первая строка (перезапись)\n");
-    append_file(file_path, "2. Вторая строка (дозапись)\n");
-
-    if let Ok(content) = read_file(file_path) {
-        println("--- Содержимое файла ---");
-        sleep(2000);
-        print(&content);
-    } else {
-        println("Ошибка при чтении файла!");
+    // Чтение кусочками по 8 байт
+    if let Ok(mut file) = FileHandle::open_read("test_run.txt") {
+        let mut buf = [0u8; 8];
+        while let Ok(bytes_read) = file.read(&mut buf) {
+            if bytes_read == 0 { break; } // EOF
+            let text = String::from_utf8_lossy(&buf[..bytes_read]);
+            print(&text);
+        }
     }
 
     // 2. Системные данные
