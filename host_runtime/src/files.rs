@@ -119,34 +119,30 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
 
     // 1. Проверки существования и типов
     linker.func_wrap("env", "host_path_exists", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> i32 {
-        let path = match read_str_from_mem(&mut caller, ptr, len) {
-            Some(p) => p,
-            None => return -1,
-        };
+        let Some(path) = read_str_from_mem(&mut caller, ptr, len).ok() else {
+                    return -1;
+                };
         if Path::new(&path).exists() { 1 } else { 0 }
     })?;
 
     linker.func_wrap("env", "host_path_is_file", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> i32 {
-        let path = match read_str_from_mem(&mut caller, ptr, len) {
-            Some(p) => p,
-            None => return -1,
-        };
+        let Some(path) = read_str_from_mem(&mut caller, ptr, len).ok() else {
+                    return -1;
+                };
         if Path::new(&path).is_file() { 1 } else { 0 }
     })?;
 
     linker.func_wrap("env", "host_path_is_dir", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> i32 {
-        let path = match read_str_from_mem(&mut caller, ptr, len) {
-            Some(p) => p,
-            None => return -1,
-        };
+        let Some(path) = read_str_from_mem(&mut caller, ptr, len).ok() else {
+                    return -1;
+                };
         if Path::new(&path).is_dir() { 1 } else { 0 }
     })?;
 
     // 2. Создание файлов и директорий
     linker.func_wrap("env", "host_make_file", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> i32 {
-        let path = match read_str_from_mem(&mut caller, ptr, len) {
-            Some(p) => p,
-            None => return -1,
+        let Some(path) = read_str_from_mem(&mut caller, ptr, len).ok() else {
+                    return -1;
         };
         match fs::File::create(path) {
             Ok(_) => 0,
@@ -155,9 +151,8 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
     })?;
 
     linker.func_wrap("env", "host_make_dir", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, recursive: i32| -> i32 {
-        let path = match read_str_from_mem(&mut caller, ptr, len) {
-            Some(p) => p,
-            None => return -1,
+        let Some(path) = read_str_from_mem(&mut caller, ptr, len).ok() else {
+                    return -1;
         };
         let res = if recursive != 0 {
             fs::create_dir_all(path)
@@ -169,17 +164,15 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
 
     // 3. Удаление
     linker.func_wrap("env", "host_remove_file", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> i32 {
-        let path = match read_str_from_mem(&mut caller, ptr, len) {
-            Some(p) => p,
-            None => return -1,
+        let Some(path) = read_str_from_mem(&mut caller, ptr, len).ok() else {
+                    return -1;
         };
         if fs::remove_file(path).is_ok() { 0 } else { -1 }
     })?;
 
     linker.func_wrap("env", "host_remove_dir", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, recursive: i32| -> i32 {
-        let path = match read_str_from_mem(&mut caller, ptr, len) {
-            Some(p) => p,
-            None => return -1,
+        let Some(path) = read_str_from_mem(&mut caller, ptr, len).ok() else {
+                    return -1;
         };
         let res = if recursive != 0 {
             fs::remove_dir_all(path)
@@ -191,9 +184,8 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
 
     // 4. Чтение списка файлов (выводит разделенные \n имена)
     linker.func_wrap("env", "host_list_dir", |mut caller: Caller<'_, HostState>, path_ptr: i32, path_len: i32, out_ptr: i32, max_len: i32| -> i32 {
-        let path = match read_str_from_mem(&mut caller, path_ptr, path_len) {
-            Some(p) => p,
-            None => return -1,
+        let Some(path) = read_str_from_mem(&mut caller, path_ptr, path_len).ok() else {
+                    return -1;
         };
 
         let entries = match fs::read_dir(path) {
