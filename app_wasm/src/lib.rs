@@ -96,7 +96,7 @@ pub extern "C" fn start() {
     println("--- Тест обработки медиа в Госте ---");
 
     // 1. Читаем одной строчкой через SDK
-    let Ok(src_bytes) = sdk::fs::read("input.jpg") else {
+    let Ok(src_bytes) = sdk::read("input.jpg") else {
         println("Ошибка: не удалось открыть input.jpg");
         return;
     };
@@ -106,7 +106,7 @@ pub extern "C" fn start() {
 
     // 3. Обрабатываем и сохраняем одной строчкой
     if let Some(processed) = process_image(&src_bytes, &transform) {
-        if sdk::fs::write("output_thumbnail.jpg", &processed).is_ok() {
+        if sdk::write("output_thumbnail.jpg", &processed).is_ok() {
             println(&format!("Готово! Картинка урезана до {} байт", processed.len()));
         }
     }
