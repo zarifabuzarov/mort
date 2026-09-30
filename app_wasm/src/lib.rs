@@ -102,7 +102,7 @@ pub extern "C" fn start() {
     };
 
     // 2. Создаем трансформацию красиво
-    let transform = ImageTransform::new_resize(300, 300).with_rotate(90);
+    let transform = ImageTransform::new_resize(200, 400).with_rotate(90);
 
     // 3. Обрабатываем и сохраняем одной строчкой
     if let Some(processed) = process_image(&src_bytes, &transform) {

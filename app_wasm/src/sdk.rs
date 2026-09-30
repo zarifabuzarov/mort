@@ -132,9 +132,12 @@ pub mod files {
         let mut file = FileHandle::open_read(path.as_ref())?;
         let mut bytes = Vec::new();
         let mut chunk = [0u8; 8192];
-        while let Ok(n) = file.read(&mut chunk) {
-            if n == 0 { break; }
-            bytes.extend_from_slice(&chunk[..n]);
+        loop {
+            match file.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => bytes.extend_from_slice(&chunk[..n]),
+                Err(_) => return Err(FsError::Failed),
+            }
         }
         Ok(bytes)
     }
