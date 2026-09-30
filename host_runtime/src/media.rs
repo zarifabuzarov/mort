@@ -161,7 +161,7 @@ pub fn register_media_api(linker: &mut Linker<HostState>) -> anyhow::Result<()> 
                 return -6;
             }
 
-            encoded_result.len() as i32
+            encoded_result.len()  as i32
         },
     )?;
 
