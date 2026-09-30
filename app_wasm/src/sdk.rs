@@ -181,7 +181,7 @@ pub mod console {
 
     #[inline(always)]
     pub fn read_line() -> String {
-        let mut buf = [0u8; 256];
+        let mut buf = [0u8; 1024];
         let len = unsafe { host_read_line(buf.as_mut_ptr(), buf.len()) };
         if len > 0 {
             String::from_utf8_lossy(&buf[..len as usize]).to_string()
@@ -255,6 +255,7 @@ pub mod time {
         fn host_sleep(mls: u64);
         fn host_now_unix() -> u64;
         fn host_now_millis() -> u64;
+        fn host_monotonic_nanos() -> u64;
     }
 
     #[inline(always)]
@@ -271,6 +272,11 @@ pub mod time {
     pub fn now_millis() -> u64 {
         unsafe { host_now_millis() }
     }
+
+    #[inline(always)]
+        pub fn monotonic_nanos() -> u64 {
+            unsafe { host_monotonic_nanos() }
+        }
 }
 
 pub mod vars {
@@ -282,31 +288,26 @@ pub mod vars {
 
     #[inline(always)]
     pub fn get_env(key: &str) -> Option<String> {
-    //     print("[SDK Debug] Заходим в get_env...\n");//
         let key_bytes = key.as_bytes();
 
         let len = unsafe {
             host_get_env_len(key_bytes.as_ptr(), key_bytes.len())
         };
 
-    //     println(&format!("[SDK Debug] Длина от хоста: {}"/, len));
-
         if len == 0 {
             return None;
         }
 
-        let mut buf = [0u8; 4096];
-        let max_len = buf.len().min(len as usize);
+        // Динамический буфер точного размера под ответ хоста
+        let mut buf = vec![0u8; len as usize];
 
-    //     print("[SDK Debug] Вызываем host_get_env...\n");
         let read = unsafe {
-            host_get_env(key_bytes.as_ptr(), key_bytes.len(), buf.as_mut_ptr(), max_len)
+            host_get_env(key_bytes.as_ptr(), key_bytes.len(), buf.as_mut_ptr(), buf.len())
         };
 
-    //     println(&format!("[SDK Debug] Прочитано байт: {}", read));
-
         if read > 0 {
-            String::from_utf8(buf[..read as usize].to_vec()).ok()
+            buf.truncate(read as usize);
+            String::from_utf8(buf).ok()
         } else {
             None
         }
@@ -379,22 +380,32 @@ pub mod media {
     extern "C" {
         fn host_image_info(img_ptr: *const u8, img_len: usize, out_w: *mut u32, out_h: *mut u32) -> i32;
         fn host_decode_image(img_ptr: *const u8, img_len: usize, out_rgba_ptr: *mut u8, max_len: usize) -> i32;
-        fn host_process_image(
-                src_ptr: *const u8,
-                src_len: usize,
-                transform_ptr: *const ImageTransform,
+        fn host_encode_image(
+                rgba_ptr: *const u8,
+                rgba_len: usize,
+                width: u32,
+                height: u32,
+                format: u32, // 0 = JPEG, 1 = PNG, 2 = WEBP
                 out_ptr: *mut u8,
                 out_max_len: usize,
             ) -> i32;
+        fn host_process_image(
+            src_ptr: *const u8,
+            src_len: usize,
+            transform_ptr: *const ImageTransform,
+            out_ptr: *mut u8,
+            out_max_len: usize,
+        ) -> i32;
     }
 
     pub struct ImageFrame {
         pub width: u32,
         pub height: u32,
-        pub pixels: Vec<u8>, // RGBA байты
+        pub pixels: Vec<u8>,
     }
 
     #[repr(C)]
+    #[derive(Debug, Copy, Clone)]
     pub struct ImageTransform {
         pub resize_width: u32,   // 0 = не менять
         pub resize_height: u32,  // 0 = не менять
@@ -421,21 +432,24 @@ pub mod media {
         }
     }
 
+    pub enum ImageFormatType {
+        Jpeg = 0,
+        Png = 1,
+        WebP = 2,
+    }
+
     pub fn decode_image(encoded_bytes: &[u8]) -> Option<ImageFrame> {
         let mut width: u32 = 0;
         let mut height: u32 = 0;
 
-        // 1. Получаем размеры
         let res = unsafe {
             host_image_info(encoded_bytes.as_ptr(), encoded_bytes.len(), &mut width, &mut height)
         };
         if res != 0 { return None; }
 
-        // 2. Выделяем буфер под RGBA (Width * Height * 4 байта)
         let required_size = (width * height * 4) as usize;
         let mut pixels = vec![0u8; required_size];
 
-        // 3. Декодируем
         let decoded_size = unsafe {
             host_decode_image(
                 encoded_bytes.as_ptr(),
@@ -452,8 +466,36 @@ pub mod media {
         }
     }
 
+    pub fn encode_image(
+        rgba_bytes: &[u8],
+        width: u32,
+        height: u32,
+        format: ImageFormatType,
+    ) -> Option<Vec<u8>> {
+        // Ожидаемый размер с запасом
+        let mut out_buf = vec![0u8; (width * height * 4) as usize];
+
+        let written = unsafe {
+            host_encode_image(
+                rgba_bytes.as_ptr(),
+                rgba_bytes.len(),
+                width,
+                height,
+                format as u32,
+                out_buf.as_mut_ptr(),
+                out_buf.len(),
+            )
+        };
+
+        if written > 0 {
+            out_buf.truncate(written as usize);
+            Some(out_buf)
+        } else {
+            None
+        }
+    }
+
     pub fn process_image(input_bytes: &[u8], transform: &ImageTransform) -> Option<Vec<u8>> {
-        // Выделяем буфер под выходной файл с запасом (например, равным размеру оригинала)
         let mut out_buf = vec![0u8; input_bytes.len().max(1024 * 1024)];
 
         let written = unsafe {

@@ -37,7 +37,7 @@ pub extern "C" fn start() {
 
     // 2. Системные данные
     println(&format!("Случайное число из хоста: {}", random_u32()));
-    println(&format!("Timestamp (sec): {}, (ms): {}", now_unix(), now_millis()));
+    println(&format!("Timestamp (sec): {}, (ms): {}, (ns): {}", now_unix(), now_millis(), monotonic_nanos()));
 
     if let Some(path) = get_env("PATH") {
         let preview = if path.len() > 100 { &path[..100] } else { &path };
@@ -112,6 +112,8 @@ pub extern "C" fn start() {
     }
 
     println("------------------------------------");
+
+    println(&format!("Timestamp (sec): {}, (ms): {}, (ns): {}", now_unix(), now_millis(), monotonic_nanos()));
 
     exit(0);
 }

@@ -1,14 +1,9 @@
 use wasmtime::*;
 use crate::state::HostState;
-use crate::utils::{read_str_from_mem, write_bytes_to_mem};
+use crate::utils::{read_str_from_mem, write_bytes_to_mem, with_mem_slice_mut};
 use std::io::Read;
 
 pub fn register_network_api(linker: &mut Linker<HostState>) -> Result<()> {
-
-    // Универсальный HTTP запрос
-    // method: "GET", "POST", "PUT", "DELETE"
-    // status_out_ptr: указатель на i32 в WASM, куда запишется HTTP-код (200, 404, 500)
-    // Возвращает: количество записанных байт тела ответа или -1 при ошибке
     linker.func_wrap(
         "env",
         "host_http_request",
@@ -22,7 +17,6 @@ pub fn register_network_api(linker: &mut Linker<HostState>) -> Result<()> {
             let Ok(method) = read_str_from_mem(&mut caller, method_ptr, method_len) else { return -1; };
             let Ok(url) = read_str_from_mem(&mut caller, url_ptr, url_len) else { return -1; };
 
-            // Читаем тело запроса (если есть)
             let body_bytes = if body_len > 0 {
                 let Ok(body_str) = read_str_from_mem(&mut caller, body_ptr, body_len) else { return -1; };
                 body_str.into_bytes()
@@ -30,7 +24,6 @@ pub fn register_network_api(linker: &mut Linker<HostState>) -> Result<()> {
                 Vec::new()
             };
 
-            // Собираем HTTP запрос с таймаутом 10 секунд
             let req = ureq::request(&method.to_uppercase(), &url)
                 .timeout(std::time::Duration::from_secs(10));
 
@@ -40,31 +33,26 @@ pub fn register_network_api(linker: &mut Linker<HostState>) -> Result<()> {
                 req.send_bytes(&body_bytes)
             };
 
-            // Разбираем ответ или сетевую ошибку
             let (status, mut reader) = match response_result {
                 Ok(resp) => (resp.status() as i32, resp.into_reader()),
                 Err(ureq::Error::Status(code, resp)) => (code as i32, resp.into_reader()),
-                Err(_) => return -1, // Ошибка сети / DNS / Таймаут
+                Err(_) => return -1,
             };
 
-            // Записываем HTTP статус обратно в память WASM (4 байта i32)
             let status_bytes = status.to_le_bytes();
             if write_bytes_to_mem(&mut caller, status_out_ptr, &status_bytes).is_err() {
                 return -1;
             }
 
-            // Вычитываем тело ответа напрямую в буфер WASM
-            let mut response_buf = vec![0u8; max_len as usize];
-            let read_bytes = match reader.read(&mut response_buf) {
-                Ok(n) => n,
-                Err(_) => return -1,
-            };
+            // Читаем из сокета прямо в WASM-память без лишнего промежуточного vec![0u8; N]
+            let read_result = with_mem_slice_mut(&mut caller, out_ptr, max_len, |buf| {
+                reader.read(buf)
+            });
 
-            if write_bytes_to_mem(&mut caller, out_ptr, &response_buf[..read_bytes]).is_err() {
-                return -1;
+            match read_result {
+                Ok(Ok(n)) => n as i32,
+                _ => -1,
             }
-
-            read_bytes as i32
         },
     )?;
 
