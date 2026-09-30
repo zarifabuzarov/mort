@@ -6,5 +6,15 @@ edition = "2021"
 [dependencies]
 wasmtime = "29.0"
 rand = "0.8"
+ring = "0.17"
 ureq = "2.9"
 thiserror = "1.0"
+anyhow = "1.0"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+[profile.release]
+opt-level = "z"     # Оптимизация по размеру (или "s")
+lto = true          # Link-Time Optimization (убирает мертвый код)
+codegen-units = 1   # Максимальная оптимизация
+panic = "abort"     # Убирает тяжелые таблицы раскрутки стека при панике
+strip = true        # Автоматически вырезает все дебаг-символы

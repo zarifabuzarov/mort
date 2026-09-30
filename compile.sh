@@ -5,6 +5,7 @@ set -e
 
 echo "[1/3] Компилируем WASM-модуль..."
 cd ~/app_wasm
+# cargo clean
 cargo build --target wasm32-unknown-unknown --release
 
 echo "[2/3] Копируем собранный .wasm в рантайм..."
