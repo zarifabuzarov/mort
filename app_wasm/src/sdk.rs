@@ -21,6 +21,11 @@ pub mod files {
         fn host_file_size(ptr: *const u8, len: usize) -> i64;
         fn host_rename(from_ptr: *const u8, from_len: usize, to_ptr: *const u8, to_len: usize) -> i32;
         fn host_seek_file(fd: i32, offset: i64) -> i64;
+
+        fn host_current_dir(out_ptr: *mut u8, max_len: usize) -> i32;
+        fn host_set_current_dir(ptr: *const u8, len: usize) -> i32;
+
+        fn host_stat(path_ptr: *const u8, path_len: usize, out_stat: *mut FileStat) -> i32;
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,6 +80,17 @@ pub mod files {
         fn drop(&mut self) {
             unsafe { host_close_file(self.fd); }
         }
+    }
+
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Default)]
+    pub struct FileStat {
+        pub size: u64,
+        pub created_sec: u64,
+        pub modified_sec: u64,
+        pub accessed_sec: u64,
+        pub permissions: u32, // UNIX mode (0o644 / 0o755) или маска прав
+        pub is_readonly: u32,  // 1 = true, 0 = false
     }
 
     pub fn path_exists(path: &str) -> bool {
@@ -147,6 +163,32 @@ pub mod files {
         file.write(contents)?;
         Ok(())
     }
+
+    pub fn current_dir() -> Result<String, ()> {
+        let mut buf = [0u8; 1024];
+        let len = unsafe { host_current_dir(buf.as_mut_ptr(), buf.len()) };
+        if len > 0 {
+            Ok(String::from_utf8_lossy(&buf[..len as usize]).to_string())
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn set_current_dir<P: AsRef<str>>(path: P) -> bool {
+        let s = path.as_ref();
+        unsafe { host_set_current_dir(s.as_ptr(), s.len()) == 0 }
+    }
+
+    pub fn stat<P: AsRef<str>>(path: P) -> Option<FileStat> {
+        let s = path.as_ref();
+        let mut file_stat = FileStat::default();
+        let res = unsafe { host_stat(s.as_ptr(), s.len(), &mut file_stat) };
+        if res == 0 {
+            Some(file_stat)
+        } else {
+            None
+        }
+    }
 }
 
 pub mod console {
@@ -189,13 +231,53 @@ pub mod console {
             String::new()
         }
     }
+
+    #[macro_export]
+    macro_rules! print {
+        ($($arg:tt)*) => {{
+            $crate::console::print(&format!($($arg)*));
+        }};
+    }
+
+    #[macro_export]
+    macro_rules! println {
+        () => {
+            $crate::console::print("\n");
+        };
+        ($($arg:tt)*) => {{
+            $crate::console::print(&format!("{}\n", format_args!($($arg)*)));
+        }};
+    }
+
+    #[macro_export]
+    macro_rules! eprint {
+        ($($arg:tt)*) => {{
+            $crate::console::eprint(&format!($($arg)*));
+        }};
+    }
+
+    #[macro_export]
+    macro_rules! eprintln {
+        () => {
+            $crate::console::eprint("\n");
+        };
+        ($($arg:tt)*) => {{
+            $crate::console::eprint(&format!("{}\n", format_args!($($arg)*)));
+        }};
+    }
 }
 
-pub mod process {
+pub mod system {
     #[link(wasm_import_module = "env")]
     extern "C" {
         fn host_get_pid() -> u32;
         fn host_exit(code: i32) -> !;
+        fn host_cpu_count() -> u32;
+        fn host_total_memory() -> u64;
+        fn host_free_memory() -> u64;
+
+        fn host_get_args_len() -> u32;
+        fn host_get_args(out_ptr: *mut u8, max_len: usize) -> u32;
     }
 
     #[inline(always)]
@@ -206,6 +288,41 @@ pub mod process {
     #[inline(always)]
     pub fn exit(code: i32) -> ! {
         unsafe { host_exit(code) }
+    }
+
+    #[inline(always)]
+    pub fn cpu_count() -> u32 {
+        unsafe { host_cpu_count() }
+    }
+
+    #[inline(always)]
+    pub fn total_memory() -> u64 {
+        unsafe { host_total_memory() }
+    }
+
+    #[inline(always)]
+    pub fn free_memory() -> u64 {
+        unsafe { host_free_memory() }
+    }
+
+    /// Получение аргументов командной строки
+    pub fn args() -> Vec<String> {
+        let len = unsafe { host_get_args_len() };
+        if len == 0 {
+            return Vec::new();
+        }
+
+        let mut buf = vec![0u8; len as usize];
+        let read = unsafe { host_get_args(buf.as_mut_ptr(), buf.len()) };
+
+        if read > 0 {
+            buf.truncate(read as usize);
+            if let Ok(s) = String::from_utf8(buf) {
+                // Разделяем по \0
+                return s.split('\0').map(|s| s.to_string()).collect();
+            }
+        }
+        Vec::new()
     }
 }
 
@@ -324,12 +441,129 @@ pub mod network {
                 out_ptr: *mut u8, max_len: usize,
                 status_out_ptr: *mut i32,
             ) -> i32;
+
+        fn host_tcp_connect(addr_ptr: *const u8, addr_len: usize) -> i32;
+        fn host_tcp_listen(addr_ptr: *const u8, addr_len: usize) -> i32;
+        fn host_tcp_accept(server_fd: i32) -> i32;
+        fn host_tcp_send(fd: i32, data_ptr: *const u8, data_len: usize) -> i32;
+        fn host_tcp_recv(fd: i32, buf_ptr: *mut u8, max_len: usize) -> i32;
+        fn host_tcp_close(fd: i32) -> i32;
+
+        // UDP Socket
+        fn host_udp_bind(addr_ptr: *const u8, addr_len: usize) -> i32;
+        fn host_udp_send_to(
+            fd: i32,
+            data_ptr: *const u8, data_len: usize,
+            target_ptr: *const u8, target_len: usize
+        ) -> i32;
+        fn host_udp_recv_from(
+            fd: i32,
+            buf_ptr: *mut u8, max_len: usize,
+            sender_out_ptr: *mut u8, sender_max_len: usize
+        ) -> i32;
+        fn host_udp_close(fd: i32) -> i32;
     }
 
     #[derive(Debug, Clone)]
     pub struct HttpResponse {
         pub status: i32,
         pub body: String,
+    }
+
+    // --- TCP Stream ---
+    pub struct TcpStream {
+        fd: i32,
+    }
+
+    impl TcpStream {
+        pub fn connect(addr: &str) -> Result<Self, ()> {
+            let fd = unsafe { host_tcp_connect(addr.as_ptr(), addr.len()) };
+            if fd >= 0 { Ok(Self { fd }) } else { Err(()) }
+        }
+
+        pub fn send(&mut self, data: &[u8]) -> Result<usize, ()> {
+            let res = unsafe { host_tcp_send(self.fd, data.as_ptr(), data.len()) };
+            if res >= 0 { Ok(res as usize) } else { Err(()) }
+        }
+
+        pub fn recv(&mut self, buf: &mut [u8]) -> Result<usize, ()> {
+            let res = unsafe { host_tcp_recv(self.fd, buf.as_mut_ptr(), buf.len()) };
+            if res >= 0 { Ok(res as usize) } else { Err(()) }
+        }
+    }
+
+    impl Drop for TcpStream {
+        fn drop(&mut self) {
+            unsafe { host_tcp_close(self.fd); }
+        }
+    }
+
+    // --- TCP Listener ---
+    pub struct TcpListener {
+        fd: i32,
+    }
+
+    impl TcpListener {
+        pub fn bind(addr: &str) -> Result<Self, ()> {
+            let fd = unsafe { host_tcp_listen(addr.as_ptr(), addr.len()) };
+            if fd >= 0 { Ok(Self { fd }) } else { Err(()) }
+        }
+
+        pub fn accept(&self) -> Result<TcpStream, ()> {
+            let stream_fd = unsafe { host_tcp_accept(self.fd) };
+            if stream_fd >= 0 { Ok(TcpStream { fd: stream_fd }) } else { Err(()) }
+        }
+    }
+
+    impl Drop for TcpListener {
+        fn drop(&mut self) {
+            unsafe { host_tcp_close(self.fd); }
+        }
+    }
+
+    // --- UDP Socket ---
+    pub struct UdpSocket {
+        fd: i32,
+    }
+
+    impl UdpSocket {
+        pub fn bind(addr: &str) -> Result<Self, ()> {
+            let fd = unsafe { host_udp_bind(addr.as_ptr(), addr.len()) };
+            if fd >= 0 { Ok(Self { fd }) } else { Err(()) }
+        }
+
+        pub fn send_to(&self, data: &[u8], target: &str) -> Result<usize, ()> {
+            let res = unsafe {
+                host_udp_send_to(self.fd, data.as_ptr(), data.len(), target.as_ptr(), target.len())
+            };
+            if res >= 0 { Ok(res as usize) } else { Err(()) }
+        }
+
+        pub fn recv_from(&self, buf: &mut [u8]) -> Result<(usize, String), ()> {
+            let mut sender_buf = [0u8; 128];
+            let res = unsafe {
+                host_udp_recv_from(
+                    self.fd,
+                    buf.as_mut_ptr(), buf.len(),
+                    sender_buf.as_mut_ptr(), sender_buf.len()
+                )
+            };
+
+            if res >= 0 {
+                let sender_len = (res >> 16) as usize; // старшие 16 бит — длина адреса
+                let bytes_read = (res & 0xFFFF) as usize; // младшие 16 бит — прочитанные байты
+                let sender = String::from_utf8_lossy(&sender_buf[..sender_len]).to_string();
+                Ok((bytes_read, sender))
+            } else {
+                Err(())
+            }
+        }
+    }
+
+    impl Drop for UdpSocket {
+        fn drop(&mut self) {
+            unsafe { host_udp_close(self.fd); }
+        }
     }
 
     pub fn http_request(method: &str, url: &str, body: Option<&str>) -> Result<HttpResponse, ()> {
@@ -519,7 +753,7 @@ pub mod media {
 
 pub use files::*;
 pub use console::*;
-pub use process::*;
+pub use system::*;
 pub use crypto::*;
 pub use time::*;
 pub use vars::*;

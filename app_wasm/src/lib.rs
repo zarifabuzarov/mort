@@ -35,6 +35,17 @@ pub extern "C" fn start() {
     // 3. Переименовать файл
     rename("test_run.txt", "test_run_renamed.txt");
 
+    // Тест CWD
+    if let Ok(cwd) = current_dir() {
+        println(&format!("Текущая директория: {}", cwd));
+    }
+
+    // Тест Stat
+    if let Some(st) = stat("test_run_renamed.txt") {
+        println(&format!("Stat: size={} bytes, modified={}s, mode={:o}, readonly={}",
+            st.size, st.modified_sec, st.permissions, st.is_readonly == 1));
+    }
+
     // 2. Системные данные
     println(&format!("Случайное число из хоста: {}", random_u32()));
     println(&format!("Timestamp (sec): {}, (ms): {}, (ns): {}", now_unix(), now_millis(), monotonic_nanos()));
@@ -46,7 +57,12 @@ pub extern "C" fn start() {
         println("Переменная PATH не найдена");
     }
 
-    println(&format!("PID процесса: {}", get_pid()));
+    println!("PID: {}", get_pid());
+    println!("CPU cores: {}", cpu_count());
+    println!("RAM Total: {} MB", total_memory() / 1024 / 1024);
+    println!("RAM Free: {} MB", free_memory() / 1024 / 1024);
+
+    println!("CLI Args: {:?}", args());
 
     // 3. Сеть
     if let Ok(response) = http_get("http://httpbin.org/ip") {
@@ -55,9 +71,26 @@ pub extern "C" fn start() {
         println("Ошибка HTTP-запроса");
     }
 
+    // ТЕСТ UDP: Отправляем эхо на публичный сервер
+    if let Ok(udp) = UdpSocket::bind("0.0.0.0:0") {
+        let msg = b"Ping WASM UDP";
+        if let Ok(sent) = udp.send_to(msg, "8.8.8.8:53") {
+            println(&format!("UDP отправлено: {} байт на 8.8.8.8:53", sent));
+        }
+    }
+
+    // ТЕСТ TCP: Пробуем подключиться к Google
+    if let Ok(mut tcp) = TcpStream::connect("google.com:80") {
+        tcp.send(b"GET / HTTP/1.1\r\nHost: google.com\r\nConnection: close\r\n\r\n").ok();
+        let mut buf = [0u8; 128];
+        if let Ok(read) = tcp.recv(&mut buf) {
+            println(&format!("TCP Ответ (первые байты):\n{}", String::from_utf8_lossy(&buf[..read])));
+        }
+    }
+
     // 4. Интерактивный ввод
     print("Введите ваше имя: ");
-    let name = read_line();
+    let name = "Zaga";//read_line();
     if !name.is_empty() {
         println(&format!("Привет, {}!", name));
     }

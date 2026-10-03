@@ -8,6 +8,9 @@ use crate::utils::{
     read_bytes_from_mem, read_str_from_mem, with_mem_slice_mut, write_bytes_to_mem,
 };
 
+use std::os::unix::fs::PermissionsExt;
+use std::time::UNIX_EPOCH;
+
 pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
     // host_open_file(path_ptr, path_len, mode) -> fd (или -1)
     // mode: 0 = read, 1 = write/truncate, 2 = append
@@ -290,6 +293,76 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
             file.seek(std::io::SeekFrom::Start(offset as u64))
                 .map(|new_pos| new_pos as i64)
                 .unwrap_or(-1)
+        },
+    )?;
+
+    linker.func_wrap(
+        "env",
+        "host_current_dir",
+        |mut caller: Caller<'_, HostState>, out_ptr: i32, max_len: i32| -> i32 {
+            let Ok(cwd) = std::env::current_dir() else { return -1; };
+            let cwd_str = cwd.to_string_lossy();
+            let bytes = cwd_str.as_bytes();
+
+            if bytes.len() > max_len as usize {
+                return -1;
+            }
+
+            match write_bytes_to_mem(&mut caller, out_ptr, bytes) {
+                Ok(_) => bytes.len() as i32,
+                Err(_) => -1,
+            }
+        },
+    )?;
+
+    linker.func_wrap(
+        "env",
+        "host_set_current_dir",
+        |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> i32 {
+            let Ok(path) = read_str_from_mem(&mut caller, ptr, len) else { return -1; };
+            if std::env::set_current_dir(path).is_ok() { 0 } else { -1 }
+        },
+    )?;
+
+    linker.func_wrap(
+        "env",
+        "host_stat",
+        |mut caller: Caller<'_, HostState>, path_ptr: i32, path_len: i32, out_stat_ptr: i32| -> i32 {
+            let Ok(path) = read_str_from_mem(&mut caller, path_ptr, path_len) else { return -1; };
+            let Ok(meta) = fs::metadata(&path) else { return -1; };
+
+            let created = meta.created().ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_secs()).unwrap_or(0);
+
+            let modified = meta.modified().ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_secs()).unwrap_or(0);
+
+            let accessed = meta.accessed().ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_secs()).unwrap_or(0);
+
+            #[cfg(unix)]
+            let mode = meta.permissions().mode();
+            #[cfg(not(unix))]
+            let mode = if meta.permissions().readonly() { 0o444 } else { 0o666 };
+
+            let is_readonly = if meta.permissions().readonly() { 1u32 } else { 0u32 };
+
+            // Собираем буфер из 48 байт (u64 x 4 + u32 x 2)
+            let mut bytes = Vec::with_capacity(48);
+            bytes.extend_from_slice(&meta.len().to_le_bytes());
+            bytes.extend_from_slice(&created.to_le_bytes());
+            bytes.extend_from_slice(&modified.to_le_bytes());
+            bytes.extend_from_slice(&accessed.to_le_bytes());
+            bytes.extend_from_slice(&mode.to_le_bytes());
+            bytes.extend_from_slice(&is_readonly.to_le_bytes());
+
+            match write_bytes_to_mem(&mut caller, out_stat_ptr, &bytes) {
+                Ok(_) => 0,
+                Err(_) => -1,
+            }
         },
     )?;
 

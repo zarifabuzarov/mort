@@ -2,7 +2,7 @@ mod state;
 mod utils;
 mod files;
 mod console;
-mod process;
+mod system;
 mod crypto;
 mod time;
 mod env_vars;
@@ -21,7 +21,7 @@ fn main() -> Result<()> {
 
     files::register_files_api(&mut linker)?;
     console::register_console_api(&mut linker)?;
-    process::register_process_api(&mut linker)?;
+    system::register_system_api(&mut linker)?;
     crypto::register_crypto_api(&mut linker)?;
     time::register_time_api(&mut linker)?;
     env_vars::register_env_api(&mut linker)?;

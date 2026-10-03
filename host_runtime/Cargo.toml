@@ -10,6 +10,7 @@ ring = "0.17"
 ureq = "2.9"
 thiserror = "1.0"
 anyhow = "1.0"
+sysinfo = "0.30"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
 [profile.release]
