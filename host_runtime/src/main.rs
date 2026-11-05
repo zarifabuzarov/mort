@@ -10,23 +10,9 @@ mod network;
 mod media;
 
 use wasmtime::*;
-use crate::state::HostState;
+use crate::state::{HostState, SharedState};
+use std::sync::{Arc, Mutex};
 
-fn main() -> Result<()> {
-    println!("[Runtime] Запуск...");
-
-    let engine = Engine::default();
-    let mut store = Store::new(&engine, HostState::new());
-    let mut linker = Linker::new(&engine);
-
-    files::register_files_api(&mut linker)?;
-    console::register_console_api(&mut linker)?;
-    system::register_system_api(&mut linker)?;
-    crypto::register_crypto_api(&mut linker)?;
-    time::register_time_api(&mut linker)?;
-    env_vars::register_env_api(&mut linker)?;
-    network::register_network_api(&mut linker)?;
-    media::register_media_api(&mut linker)?;
 
 //     println!("[Runtime] Зарегистрированные хост-функции:");
 //
@@ -53,31 +39,64 @@ fn main() -> Result<()> {
 //     host_channel_send(tx_id, data_ptr, len)
 //     host_channel_recv(rx_id, out_ptr)
 
-    let module = Module::from_file(&engine, "app.wasm")?;
-    let instance = linker.instantiate(&mut store, &module)?;
-    let start_func = instance.get_typed_func::<(), ()>(&mut store, "start")?;
+#[tokio::main]
+async fn main() -> Result<()> {
+    println!("[Runtime] Запуск...");
 
-    println!("[Runtime] Вызов функции из WASM:");
+    let engine = Engine::default();
+    let shared_state: SharedState = Arc::new(Mutex::new(HostState::new()));
 
-        if let Err(err) = start_func.call(&mut store, ()) {
-            let err_msg = format!("{:#}", err); // Берем полную цепочку ошибок
+    let mut handles = vec![];
 
-            if err_msg.contains("WASM_EXIT_SUCCESS") {
-                // Тихо и чистенько завершаем — модуль вывел code: 0
-            } else if err_msg.contains("WASM_EXIT_FAILURE") {
-                let code = err_msg.split("WASM_EXIT_FAILURE: ")
-                    .nth(1)
-                    .unwrap_or("неизвестно")
-                    .lines()
-                    .next()
-                    .unwrap_or("");
-                eprintln!("[Runtime] Модуль завершил работу с кодом ошибки: {}", code);
-            } else {
-                // Настоящая ошибка рантайма или паника в WASM
-                eprintln!("[Runtime Error] {}", err);
+    for i in 0..3 {
+        let engine = engine.clone();
+        let shared_state = shared_state.clone();
+
+        let handle = tokio::spawn(async move {
+            println!("[Runtime] Запуск модуля #{}", i);
+
+            // Store должен жить в одном потоке/задаче
+            let mut store = Store::new(&engine, shared_state.clone());
+            let mut linker = Linker::new(&engine);
+
+            files::register_files_api(&mut linker).unwrap();
+            console::register_console_api(&mut linker).unwrap();
+            system::register_system_api(&mut linker).unwrap();
+            crypto::register_crypto_api(&mut linker).unwrap();
+            time::register_time_api(&mut linker).unwrap();
+            env_vars::register_env_api(&mut linker).unwrap();
+            network::register_network_api(&mut linker).unwrap();
+            media::register_media_api(&mut linker).unwrap();
+
+            let module = Module::from_file(&engine, "app.wasm").unwrap();
+            let instance = linker.instantiate(&mut store, &module).unwrap();
+            let start_func = instance
+                .get_typed_func::<(), ()>(&mut store, "start")
+                .unwrap();
+
+            println!("[Runtime] Модуль #{} вызывает start()", i);
+
+            // Пока синхронный вызов. Позже можно сделать async host functions.
+            if let Err(err) = start_func.call(&mut store, ()) {
+                let err_msg = format!("{:#}", err);
+                if err_msg.contains("WASM_EXIT_SUCCESS") {
+                    println!("[Runtime] Модуль #{} завершился успешно", i);
+                } else if err_msg.contains("WASM_EXIT_FAILURE") {
+                    eprintln!("[Runtime] Модуль #{} завершился с ошибкой", i);
+                } else {
+                    eprintln!("[Runtime Error] Модуль #{}: {}", i, err);
+                }
             }
-        }
+        });
 
+        handles.push(handle);
+    }
+
+    // Ждём все задачи
+    for handle in handles {
+        handle.await.unwrap();
+    }
+
+    println!("[Runtime] Все модули завершились");
     Ok(())
 }
-

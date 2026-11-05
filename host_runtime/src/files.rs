@@ -3,7 +3,7 @@ use std::io::{Read, Write, Seek};
 use std::path::Path;
 use wasmtime::*;
 
-use crate::state::HostState;
+use crate::state::SharedState;
 use crate::utils::{
     read_bytes_from_mem, read_str_from_mem, with_mem_slice_mut, write_bytes_to_mem,
 };
@@ -11,13 +11,13 @@ use crate::utils::{
 use std::os::unix::fs::PermissionsExt;
 use std::time::UNIX_EPOCH;
 
-pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
+pub fn register_files_api(linker: &mut Linker<SharedState>) -> Result<()> {
     // host_open_file(path_ptr, path_len, mode) -> fd (или -1)
     // mode: 0 = read, 1 = write/truncate, 2 = append
     linker.func_wrap(
         "env",
         "host_open_file",
-        |mut caller: Caller<'_, HostState>, path_ptr: i32, path_len: i32, mode: i32| -> i32 {
+        |mut caller: Caller<'_, SharedState>, path_ptr: i32, path_len: i32, mode: i32| -> i32 {
             let path = match read_str_from_mem(&mut caller, path_ptr, path_len) {
                 Ok(p) => p,
                 Err(_) => return -1,
@@ -36,7 +36,7 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
                 Err(_) => return -1,
             };
 
-            let state = caller.data_mut();
+            let mut state = caller.data().lock().unwrap();
             let fd = state.next_fd;
             state.next_fd += 1;
             state.files.insert(fd, file);
@@ -50,9 +50,9 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_read_file",
-        |mut caller: Caller<'_, HostState>, fd: i32, buf_ptr: i32, buf_len: i32| -> i32 {
+        |mut caller: Caller<'_, SharedState>, fd: i32, buf_ptr: i32, buf_len: i32| -> i32 {
             // Сначала проверяем, есть ли такой открытый файл
-            let mut file = match caller.data_mut().files.remove(&fd) {
+            let mut file = match caller.data_mut().lock().unwrap().files.remove(&fd) {
                 Some(f) => f,
                 None => return -1,
             };
@@ -68,7 +68,7 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
                 _ => -1,
             };
 
-            caller.data_mut().files.insert(fd, file);
+            caller.data_mut().lock().unwrap().files.insert(fd, file);
             bytes_read
         },
     )?;
@@ -77,13 +77,13 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_write_file",
-        |mut caller: Caller<'_, HostState>, fd: i32, data_ptr: i32, data_len: i32| -> i32 {
+        |mut caller: Caller<'_, SharedState>, fd: i32, data_ptr: i32, data_len: i32| -> i32 {
             let bytes_to_write = match read_bytes_from_mem(&mut caller, data_ptr, data_len) {
                 Ok(b) => b,
                 Err(_) => return -1,
             };
 
-            let state = caller.data_mut();
+            let mut state = caller.data().lock().unwrap();
             let file = match state.files.get_mut(&fd) {
                 Some(f) => f,
                 None => return -1,
@@ -100,8 +100,8 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_close_file",
-        |mut caller: Caller<'_, HostState>, fd: i32| -> i32 {
-            if caller.data_mut().files.remove(&fd).is_some() {
+        |mut caller: Caller<'_, SharedState>, fd: i32| -> i32 {
+            if caller.data_mut().lock().unwrap().files.remove(&fd).is_some() {
                 0
             } else {
                 -1
@@ -113,7 +113,7 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_path_exists",
-        |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> i32 {
+        |mut caller: Caller<'_, SharedState>, ptr: i32, len: i32| -> i32 {
             let Ok(path) = read_str_from_mem(&mut caller, ptr, len) else {
                 return -1;
             };
@@ -124,7 +124,7 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_path_is_file",
-        |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> i32 {
+        |mut caller: Caller<'_, SharedState>, ptr: i32, len: i32| -> i32 {
             let Ok(path) = read_str_from_mem(&mut caller, ptr, len) else {
                 return -1;
             };
@@ -135,7 +135,7 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_path_is_dir",
-        |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> i32 {
+        |mut caller: Caller<'_, SharedState>, ptr: i32, len: i32| -> i32 {
             let Ok(path) = read_str_from_mem(&mut caller, ptr, len) else {
                 return -1;
             };
@@ -147,7 +147,7 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_make_file",
-        |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> i32 {
+        |mut caller: Caller<'_, SharedState>, ptr: i32, len: i32| -> i32 {
             let Ok(path) = read_str_from_mem(&mut caller, ptr, len) else {
                 return -1;
             };
@@ -161,7 +161,7 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_make_dir",
-        |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, recursive: i32| -> i32 {
+        |mut caller: Caller<'_, SharedState>, ptr: i32, len: i32, recursive: i32| -> i32 {
             let Ok(path) = read_str_from_mem(&mut caller, ptr, len) else {
                 return -1;
             };
@@ -178,7 +178,7 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_remove_file",
-        |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> i32 {
+        |mut caller: Caller<'_, SharedState>, ptr: i32, len: i32| -> i32 {
             let Ok(path) = read_str_from_mem(&mut caller, ptr, len) else {
                 return -1;
             };
@@ -189,7 +189,7 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_remove_dir",
-        |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, recursive: i32| -> i32 {
+        |mut caller: Caller<'_, SharedState>, ptr: i32, len: i32, recursive: i32| -> i32 {
             let Ok(path) = read_str_from_mem(&mut caller, ptr, len) else {
                 return -1;
             };
@@ -206,7 +206,7 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_list_dir",
-        |mut caller: Caller<'_, HostState>,
+        |mut caller: Caller<'_, SharedState>,
          path_ptr: i32,
          path_len: i32,
          out_ptr: i32,
@@ -248,7 +248,7 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_file_size",
-        |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> i64 {
+        |mut caller: Caller<'_, SharedState>, ptr: i32, len: i32| -> i64 {
             let Ok(path) = read_str_from_mem(&mut caller, ptr, len) else {
                 return -1;
             };
@@ -260,7 +260,7 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_rename",
-        |mut caller: Caller<'_, HostState>,
+        |mut caller: Caller<'_, SharedState>,
          from_ptr: i32, from_len: i32,
          to_ptr: i32, to_len: i32| -> i32 {
             let Ok(from) = read_str_from_mem(&mut caller, from_ptr, from_len) else { return -1; };
@@ -286,8 +286,8 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_seek_file",
-        |mut caller: Caller<'_, HostState>, fd: i32, offset: i64| -> i64 {
-            let state = caller.data_mut();
+        |mut caller: Caller<'_, SharedState>, fd: i32, offset: i64| -> i64 {
+            let mut state = caller.data().lock().unwrap();
             let Some(file) = state.files.get_mut(&fd) else { return -1; };
 
             file.seek(std::io::SeekFrom::Start(offset as u64))
@@ -299,7 +299,7 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_current_dir",
-        |mut caller: Caller<'_, HostState>, out_ptr: i32, max_len: i32| -> i32 {
+        |mut caller: Caller<'_, SharedState>, out_ptr: i32, max_len: i32| -> i32 {
             let Ok(cwd) = std::env::current_dir() else { return -1; };
             let cwd_str = cwd.to_string_lossy();
             let bytes = cwd_str.as_bytes();
@@ -318,7 +318,7 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_set_current_dir",
-        |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> i32 {
+        |mut caller: Caller<'_, SharedState>, ptr: i32, len: i32| -> i32 {
             let Ok(path) = read_str_from_mem(&mut caller, ptr, len) else { return -1; };
             if std::env::set_current_dir(path).is_ok() { 0 } else { -1 }
         },
@@ -327,7 +327,7 @@ pub fn register_files_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_stat",
-        |mut caller: Caller<'_, HostState>, path_ptr: i32, path_len: i32, out_stat_ptr: i32| -> i32 {
+        |mut caller: Caller<'_, SharedState>, path_ptr: i32, path_len: i32, out_stat_ptr: i32| -> i32 {
             let Ok(path) = read_str_from_mem(&mut caller, path_ptr, path_len) else { return -1; };
             let Ok(meta) = fs::metadata(&path) else { return -1; };
 

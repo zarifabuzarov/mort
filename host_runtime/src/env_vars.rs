@@ -1,13 +1,13 @@
 use std::env;
 use wasmtime::*;
-use crate::state::HostState;
+use crate::state::SharedState;
 use crate::utils::{read_str_from_mem, write_bytes_to_mem};
 
-pub fn register_env_api(linker: &mut Linker<HostState>) -> Result<()> {
+pub fn register_env_api(linker: &mut Linker<SharedState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_get_env_len",
-        |mut caller: Caller<'_, HostState>, key_ptr: i32, key_len: i32| -> u32 {
+        |mut caller: Caller<'_, SharedState>, key_ptr: i32, key_len: i32| -> u32 {
             let Ok(key) = read_str_from_mem(&mut caller, key_ptr, key_len) else {
                 return 0;
             };
@@ -19,7 +19,7 @@ pub fn register_env_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_get_env",
-        |mut caller: Caller<'_, HostState>, key_ptr: i32, key_len: i32, out_ptr: i32, out_max_len: i32| -> u32 {
+        |mut caller: Caller<'_, SharedState>, key_ptr: i32, key_len: i32, out_ptr: i32, out_max_len: i32| -> u32 {
             let Ok(key) = read_str_from_mem(&mut caller, key_ptr, key_len) else {
                 return 0;
             };

@@ -1,12 +1,12 @@
 use rand::RngCore;
 use ring::digest::{digest, SHA256, SHA512};
 use wasmtime::*;
-use crate::state::HostState;
+use crate::state::SharedState;
 use crate::utils::{with_mem_slice, with_mem_slice_mut};
 
-pub fn register_crypto_api(linker: &mut Linker<HostState>) -> Result<()> {
+pub fn register_crypto_api(linker: &mut Linker<SharedState>) -> Result<()> {
     // 1. Генерация random u32
-    linker.func_wrap("env", "host_random_u32", |_caller: Caller<'_, HostState>| -> u32 {
+    linker.func_wrap("env", "host_random_u32", |_caller: Caller<'_, SharedState>| -> u32 {
         let mut rng = rand::thread_rng();
         rng.next_u32()
     })?;
@@ -15,7 +15,7 @@ pub fn register_crypto_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_random_bytes",
-        |mut caller: Caller<'_, HostState>, out_ptr: i32, len: i32| -> i32 {
+        |mut caller: Caller<'_, SharedState>, out_ptr: i32, len: i32| -> i32 {
             let res = with_mem_slice_mut(&mut caller, out_ptr, len, |buf| {
                 rand::thread_rng().fill_bytes(buf);
             });
@@ -28,7 +28,7 @@ pub fn register_crypto_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_hash",
-        |mut caller: Caller<'_, HostState>,
+        |mut caller: Caller<'_, SharedState>,
          alg: i32,
          data_ptr: i32,
          data_len: i32,

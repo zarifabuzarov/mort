@@ -2,7 +2,7 @@ use std::str::Utf8Error;
 use thiserror::Error;
 use wasmtime::Caller;
 
-use crate::state::HostState;
+use crate::state::SharedState;
 
 pub const MAX_TRANSFER_SIZE: usize = 8 * 1024 * 1024;
 
@@ -20,7 +20,7 @@ pub enum MemError {
     InvalidUtf8(#[from] Utf8Error),
 }
 
-fn get_memory(caller: &mut Caller<'_, HostState>) -> Result<wasmtime::Memory, MemError> {
+fn get_memory(caller: &mut Caller<'_, SharedState>) -> Result<wasmtime::Memory, MemError> {
     caller
         .get_export("memory")
         .and_then(|e| e.into_memory())
@@ -37,7 +37,7 @@ fn validate_bounds(ptr: i32, len: usize) -> Result<(usize, usize), MemError> {
 }
 
 pub fn with_mem_slice<F, R>(
-    caller: &mut Caller<'_, HostState>,
+    caller: &mut Caller<'_, SharedState>,
     ptr: i32,
     len: i32,
     f: F,
@@ -57,7 +57,7 @@ where
 }
 
 pub fn with_mem_slice_mut<F, R>(
-    caller: &mut Caller<'_, HostState>,
+    caller: &mut Caller<'_, SharedState>,
     ptr: i32,
     len: i32,
     f: F,
@@ -78,7 +78,7 @@ where
 
 #[allow(dead_code)]
 pub fn with_str_from_mem<F, R>(
-    caller: &mut Caller<'_, HostState>,
+    caller: &mut Caller<'_, SharedState>,
     ptr: i32,
     len: i32,
     f: F,
@@ -93,7 +93,7 @@ where
 }
 
 pub fn read_bytes_from_mem(
-    caller: &mut Caller<'_, HostState>,
+    caller: &mut Caller<'_, SharedState>,
     ptr: i32,
     len: i32,
 ) -> Result<Vec<u8>, MemError> {
@@ -101,7 +101,7 @@ pub fn read_bytes_from_mem(
 }
 
 pub fn read_str_from_mem(
-    caller: &mut Caller<'_, HostState>,
+    caller: &mut Caller<'_, SharedState>,
     ptr: i32,
     len: i32,
 ) -> Result<String, MemError> {
@@ -109,7 +109,7 @@ pub fn read_str_from_mem(
 }
 
 pub fn write_bytes_to_mem(
-    caller: &mut Caller<'_, HostState>,
+    caller: &mut Caller<'_, SharedState>,
     ptr: i32,
     bytes: &[u8],
 ) -> Result<(), MemError> {
@@ -124,7 +124,7 @@ pub fn write_bytes_to_mem(
 
 #[allow(dead_code)]
 pub fn write_str_to_mem(
-    caller: &mut Caller<'_, HostState>,
+    caller: &mut Caller<'_, SharedState>,
     ptr: i32,
     s: &str,
 ) -> Result<(), MemError> {

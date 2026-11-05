@@ -1,14 +1,14 @@
 use wasmtime::*;
-use crate::state::HostState;
+use crate::state::SharedState;
 use std::io::{Read, Write};
 use crate::utils::{read_str_from_mem, read_bytes_from_mem, with_mem_slice_mut, write_bytes_to_mem};
 use std::net::{TcpStream, TcpListener, UdpSocket};
 
-pub fn register_network_api(linker: &mut Linker<HostState>) -> Result<()> {
+pub fn register_network_api(linker: &mut Linker<SharedState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_http_request",
-        |mut caller: Caller<'_, HostState>,
+        |mut caller: Caller<'_, SharedState>,
          method_ptr: i32, method_len: i32,
          url_ptr: i32, url_len: i32,
          body_ptr: i32, body_len: i32,
@@ -61,11 +61,11 @@ pub fn register_network_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_tcp_connect",
-        |mut caller: Caller<'_, HostState>, addr_ptr: i32, addr_len: i32| -> i32 {
+        |mut caller: Caller<'_, SharedState>, addr_ptr: i32, addr_len: i32| -> i32 {
             let Ok(addr) = read_str_from_mem(&mut caller, addr_ptr, addr_len) else { return -1; };
             let Ok(stream) = TcpStream::connect(addr) else { return -1; };
 
-            let state = caller.data_mut();
+            let mut state = caller.data().lock().unwrap();
             let fd = state.next_net_fd;
             state.next_net_fd += 1;
             state.tcp_streams.insert(fd, stream);
@@ -77,11 +77,11 @@ pub fn register_network_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_tcp_listen",
-        |mut caller: Caller<'_, HostState>, addr_ptr: i32, addr_len: i32| -> i32 {
+        |mut caller: Caller<'_, SharedState>, addr_ptr: i32, addr_len: i32| -> i32 {
             let Ok(addr) = read_str_from_mem(&mut caller, addr_ptr, addr_len) else { return -1; };
             let Ok(listener) = TcpListener::bind(addr) else { return -1; };
 
-            let state = caller.data_mut();
+            let mut state = caller.data().lock().unwrap();
             let fd = state.next_net_fd;
             state.next_net_fd += 1;
             state.tcp_listeners.insert(fd, listener);
@@ -93,8 +93,8 @@ pub fn register_network_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_tcp_accept",
-        |mut caller: Caller<'_, HostState>, server_fd: i32| -> i32 {
-            let state = caller.data_mut();
+        |mut caller: Caller<'_, SharedState>, server_fd: i32| -> i32 {
+            let mut state = caller.data().lock().unwrap();
             let Some(listener) = state.tcp_listeners.get(&server_fd) else { return -1; };
 
             let Ok((stream, _)) = listener.accept() else { return -1; };
@@ -110,9 +110,9 @@ pub fn register_network_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_tcp_send",
-        |mut caller: Caller<'_, HostState>, fd: i32, data_ptr: i32, data_len: i32| -> i32 {
+        |mut caller: Caller<'_, SharedState>, fd: i32, data_ptr: i32, data_len: i32| -> i32 {
             let Ok(bytes) = read_bytes_from_mem(&mut caller, data_ptr, data_len) else { return -1; };
-            let state = caller.data_mut();
+            let mut state = caller.data().lock().unwrap();
             let Some(stream) = state.tcp_streams.get_mut(&fd) else { return -1; };
 
             stream.write(&bytes).map(|n| n as i32).unwrap_or(-1)
@@ -123,8 +123,8 @@ pub fn register_network_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_tcp_recv",
-        |mut caller: Caller<'_, HostState>, fd: i32, buf_ptr: i32, max_len: i32| -> i32 {
-            let mut stream = match caller.data_mut().tcp_streams.remove(&fd) {
+        |mut caller: Caller<'_, SharedState>, fd: i32, buf_ptr: i32, max_len: i32| -> i32 {
+            let mut stream = match caller.data_mut().lock().unwrap().tcp_streams.remove(&fd) {
                 Some(s) => s,
                 None => return -1,
             };
@@ -138,7 +138,7 @@ pub fn register_network_api(linker: &mut Linker<HostState>) -> Result<()> {
                 _ => -1,
             };
 
-            caller.data_mut().tcp_streams.insert(fd, stream);
+            caller.data_mut().lock().unwrap().tcp_streams.insert(fd, stream);
             bytes_read
         },
     )?;
@@ -147,8 +147,8 @@ pub fn register_network_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_tcp_close",
-        |mut caller: Caller<'_, HostState>, fd: i32| -> i32 {
-            let state = caller.data_mut();
+        |mut caller: Caller<'_, SharedState>, fd: i32| -> i32 {
+            let mut state = caller.data().lock().unwrap();
             if state.tcp_streams.remove(&fd).is_some() || state.tcp_listeners.remove(&fd).is_some() {
                 0
             } else {
@@ -161,11 +161,11 @@ pub fn register_network_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_udp_bind",
-        |mut caller: Caller<'_, HostState>, addr_ptr: i32, addr_len: i32| -> i32 {
+        |mut caller: Caller<'_, SharedState>, addr_ptr: i32, addr_len: i32| -> i32 {
             let Ok(addr) = read_str_from_mem(&mut caller, addr_ptr, addr_len) else { return -1; };
             let Ok(sock) = UdpSocket::bind(addr) else { return -1; };
 
-            let state = caller.data_mut();
+            let mut state = caller.data().lock().unwrap();
             let fd = state.next_net_fd;
             state.next_net_fd += 1;
             state.udp_sockets.insert(fd, sock);
@@ -177,11 +177,11 @@ pub fn register_network_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_udp_send_to",
-        |mut caller: Caller<'_, HostState>, fd: i32, data_ptr: i32, data_len: i32, target_ptr: i32, target_len: i32| -> i32 {
+        |mut caller: Caller<'_, SharedState>, fd: i32, data_ptr: i32, data_len: i32, target_ptr: i32, target_len: i32| -> i32 {
             let Ok(bytes) = read_bytes_from_mem(&mut caller, data_ptr, data_len) else { return -1; };
             let Ok(target) = read_str_from_mem(&mut caller, target_ptr, target_len) else { return -1; };
 
-            let state = caller.data_mut();
+            let mut state = caller.data().lock().unwrap();
             let Some(sock) = state.udp_sockets.get(&fd) else { return -1; };
 
             sock.send_to(&bytes, target).map(|n| n as i32).unwrap_or(-1)
@@ -192,8 +192,8 @@ pub fn register_network_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_udp_recv_from",
-        |mut caller: Caller<'_, HostState>, fd: i32, buf_ptr: i32, max_len: i32, sender_ptr: i32, sender_max_len: i32| -> i32 {
-            let sock = match caller.data_mut().udp_sockets.remove(&fd) {
+        |mut caller: Caller<'_, SharedState>, fd: i32, buf_ptr: i32, max_len: i32, sender_ptr: i32, sender_max_len: i32| -> i32 {
+            let sock = match caller.data_mut().lock().unwrap().udp_sockets.remove(&fd) {
                 Some(s) => s,
                 None => return -1,
             };
@@ -201,7 +201,7 @@ pub fn register_network_api(linker: &mut Linker<HostState>) -> Result<()> {
             let mut temp_buf = vec![0u8; max_len as usize];
             match sock.recv_from(&mut temp_buf) {
                 Ok((n, src)) => {
-                    caller.data_mut().udp_sockets.insert(fd, sock);
+                    caller.data_mut().lock().unwrap().udp_sockets.insert(fd, sock);
 
                     // Записываем полученные данные в буфер WASM
                     if write_bytes_to_mem(&mut caller, buf_ptr, &temp_buf[..n]).is_err() {
@@ -218,7 +218,7 @@ pub fn register_network_api(linker: &mut Linker<HostState>) -> Result<()> {
                     ((src_bytes.len() as i32) << 16) | (n as i32 & 0xFFFF)
                 }
                 Err(_) => {
-                    caller.data_mut().udp_sockets.insert(fd, sock);
+                    caller.data_mut().lock().unwrap().udp_sockets.insert(fd, sock);
                     -1
                 }
             }
@@ -229,8 +229,8 @@ pub fn register_network_api(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_udp_close",
-        |mut caller: Caller<'_, HostState>, fd: i32| -> i32 {
-            if caller.data_mut().udp_sockets.remove(&fd).is_some() { 0 } else { -1 }
+        |mut caller: Caller<'_, SharedState>, fd: i32| -> i32 {
+            if caller.data_mut().lock().unwrap().udp_sockets.remove(&fd).is_some() { 0 } else { -1 }
         },
     )?;
 

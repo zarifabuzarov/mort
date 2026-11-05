@@ -2,7 +2,7 @@ use std::io::Cursor;
 // use image::{ImageFormat};.
 use wasmtime::{Caller, Linker};
 
-use crate::state::HostState;
+use crate::state::SharedState;
 use crate::utils::{with_mem_slice, write_bytes_to_mem};
 use image::{ImageReader, ImageBuffer, Rgba, ImageFormat};
 
@@ -18,11 +18,11 @@ pub struct ImageTransform {
     pub crop_h: u32,
 }
 
-pub fn register_media_api(linker: &mut Linker<HostState>) -> anyhow::Result<()> {
+pub fn register_media_api(linker: &mut Linker<SharedState>) -> anyhow::Result<()> {
     linker.func_wrap(
         "env",
         "host_image_info",
-        |mut caller: Caller<'_, HostState>,
+        |mut caller: Caller<'_, SharedState>,
          img_ptr: i32,
          img_len: i32,
          out_width_ptr: i32,
@@ -59,7 +59,7 @@ pub fn register_media_api(linker: &mut Linker<HostState>) -> anyhow::Result<()> 
     linker.func_wrap(
         "env",
         "host_decode_image",
-        |mut caller: Caller<'_, HostState>,
+        |mut caller: Caller<'_, SharedState>,
          img_ptr: i32,
          img_len: i32,
          out_rgba_ptr: i32,
@@ -90,7 +90,7 @@ pub fn register_media_api(linker: &mut Linker<HostState>) -> anyhow::Result<()> 
     linker.func_wrap(
         "env",
         "host_encode_image",
-        |mut caller: Caller<'_, HostState>,
+        |mut caller: Caller<'_, SharedState>,
          rgba_ptr: i32,
          rgba_len: i32,
          width: u32,
@@ -144,7 +144,7 @@ pub fn register_media_api(linker: &mut Linker<HostState>) -> anyhow::Result<()> 
     linker.func_wrap(
         "env",
         "host_process_image",
-        |mut caller: Caller<'_, HostState>,
+        |mut caller: Caller<'_, SharedState>,
          src_ptr: i32,
          src_len: i32,
          transform_ptr: i32,
