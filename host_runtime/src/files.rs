@@ -28,12 +28,18 @@ pub fn register_files_api(linker: &mut Linker<SharedState>) -> Result<()> {
                 0 => { opts.read(true); }
                 1 => { opts.write(true).create(true).truncate(true); }
                 2 => { opts.write(true).create(true).append(true); }
-                _ => return -1,
+                _ => {
+                         eprintln!("host_open_file: invalid mode {mode}");
+                         return -1;
+                     },
             };
 
             let file = match opts.open(&path) {
                 Ok(f) => f,
-                Err(_) => return -1,
+                Err(e) => {
+                    eprintln!("host_open_file: failed to open '{path}': {e}");
+                    return -1;
+                }
             };
 
             let mut state = caller.data().lock().unwrap();
@@ -51,25 +57,31 @@ pub fn register_files_api(linker: &mut Linker<SharedState>) -> Result<()> {
         "env",
         "host_read_file",
         |mut caller: Caller<'_, SharedState>, fd: i32, buf_ptr: i32, buf_len: i32| -> i32 {
-            // Сначала проверяем, есть ли такой открытый файл
             let mut file = match caller.data_mut().lock().unwrap().files.remove(&fd) {
                 Some(f) => f,
-                None => return -1,
+                None => {
+                    eprintln!("host_read_file: invalid fd {fd}");
+                    return -1;
+                }
             };
 
-            // Читаем данные напрямую в срез памяти WASM (Zero-Copy без промежуточного vec![0; N]!)
             let read_result = with_mem_slice_mut(&mut caller, buf_ptr, buf_len, |buf| {
                 file.read(buf)
             });
 
-            // Возвращаем файл обратно в стейт
-            let bytes_read = match read_result {
-                Ok(Ok(n)) => n as i32,
-                _ => -1,
-            };
-
             caller.data_mut().lock().unwrap().files.insert(fd, file);
-            bytes_read
+
+            match read_result {
+                Ok(Ok(n)) => n as i32,
+                Ok(Err(e)) => {
+                    eprintln!("host_read_file: I/O error: {e}");
+                    -1
+                }
+                Err(e) => {
+                    eprintln!("host_read_file: {e}");
+                    -1
+                }
+            }
         },
     )?;
 
@@ -80,18 +92,27 @@ pub fn register_files_api(linker: &mut Linker<SharedState>) -> Result<()> {
         |mut caller: Caller<'_, SharedState>, fd: i32, data_ptr: i32, data_len: i32| -> i32 {
             let bytes_to_write = match read_bytes_from_mem(&mut caller, data_ptr, data_len) {
                 Ok(b) => b,
-                Err(_) => return -1,
+                Err(e) => {
+                    eprintln!("host_write_file: {e}");
+                    return -1;
+                }
             };
 
             let mut state = caller.data().lock().unwrap();
             let file = match state.files.get_mut(&fd) {
                 Some(f) => f,
-                None => return -1,
+                None => {
+                    eprintln!("host_write_file: invalid fd {fd}");
+                    return -1;
+                }
             };
 
             match file.write(&bytes_to_write) {
                 Ok(n) => n as i32,
-                Err(_) => -1,
+                Err(e) => {
+                    eprintln!("host_write_file: I/O error: {e}");
+                    -1
+                }
             }
         },
     )?;
@@ -104,6 +125,7 @@ pub fn register_files_api(linker: &mut Linker<SharedState>) -> Result<()> {
             if caller.data_mut().lock().unwrap().files.remove(&fd).is_some() {
                 0
             } else {
+                eprintln!("host_close_file: invalid fd {fd}");
                 -1
             }
         },
@@ -216,9 +238,12 @@ pub fn register_files_api(linker: &mut Linker<SharedState>) -> Result<()> {
                 return -1;
             };
 
-            let entries = match fs::read_dir(path) {
+            let entries = match fs::read_dir(&path) {
                 Ok(e) => e,
-                Err(_) => return -1,
+                Err(e) => {
+                    eprintln!("host_list_dir: failed to read '{path}': {e}");
+                    return -1;
+                }
             };
 
             let mut result = String::new();
@@ -351,14 +376,14 @@ pub fn register_files_api(linker: &mut Linker<SharedState>) -> Result<()> {
 
             let is_readonly = if meta.permissions().readonly() { 1u32 } else { 0u32 };
 
-            // Собираем буфер из 48 байт (u64 x 4 + u32 x 2)
-            let mut bytes = Vec::with_capacity(48);
-            bytes.extend_from_slice(&meta.len().to_le_bytes());
-            bytes.extend_from_slice(&created.to_le_bytes());
-            bytes.extend_from_slice(&modified.to_le_bytes());
-            bytes.extend_from_slice(&accessed.to_le_bytes());
-            bytes.extend_from_slice(&mode.to_le_bytes());
-            bytes.extend_from_slice(&is_readonly.to_le_bytes());
+            // Собираем буфер из 40 байт (u64 x 4 + u32 x 2)
+            let mut bytes = [0u8; 40];
+            bytes[0..8].copy_from_slice(&meta.len().to_le_bytes());
+            bytes[8..16].copy_from_slice(&created.to_le_bytes());
+            bytes[16..24].copy_from_slice(&modified.to_le_bytes());
+            bytes[24..32].copy_from_slice(&accessed.to_le_bytes());
+            bytes[32..36].copy_from_slice(&mode.to_le_bytes());
+            bytes[36..40].copy_from_slice(&is_readonly.to_le_bytes());
 
             match write_bytes_to_mem(&mut caller, out_stat_ptr, &bytes) {
                 Ok(_) => 0,

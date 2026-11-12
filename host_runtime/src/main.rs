@@ -8,6 +8,7 @@ mod time;
 mod env_vars;
 mod network;
 mod media;
+mod error;
 
 use wasmtime::*;
 use crate::state::{HostState, SharedState};
