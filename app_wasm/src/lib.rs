@@ -1,8 +1,7 @@
 mod sdk;
 use sdk::*;
 
-#[no_mangle]
-pub extern "C" fn start() {
+start! {
     if let Ok(mut file) = FileHandle::create_write("test_run.txt") {
         file.write(b"Chunk 1...\n").ok();
         file.write(b"Chunk 2...\n").ok();
@@ -90,7 +89,7 @@ pub extern "C" fn start() {
 
     // 4. Интерактивный ввод
     print("Введите ваше имя: ");
-    let name = "Zaga";//read_line();
+    let name = "Zake";//read_line();
     if !name.is_empty() {
         println(&format!("Привет, {}!", name));
     }

@@ -286,6 +286,7 @@ pub fn register_files_api(linker: &mut Linker<SharedState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_seek_file",
+        #[allow(unused_mut)]
         |mut caller: Caller<'_, SharedState>, fd: i32, offset: i64| -> i64 {
             let mut state = caller.data().lock().unwrap();
             let Some(file) = state.files.get_mut(&fd) else { return -1; };

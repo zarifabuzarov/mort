@@ -93,6 +93,7 @@ pub fn register_network_api(linker: &mut Linker<SharedState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_tcp_accept",
+        #[allow(unused_mut)]
         |mut caller: Caller<'_, SharedState>, server_fd: i32| -> i32 {
             let mut state = caller.data().lock().unwrap();
             let Some(listener) = state.tcp_listeners.get(&server_fd) else { return -1; };
@@ -147,6 +148,7 @@ pub fn register_network_api(linker: &mut Linker<SharedState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_tcp_close",
+        #[allow(unused_mut)]
         |mut caller: Caller<'_, SharedState>, fd: i32| -> i32 {
             let mut state = caller.data().lock().unwrap();
             if state.tcp_streams.remove(&fd).is_some() || state.tcp_listeners.remove(&fd).is_some() {
@@ -177,6 +179,7 @@ pub fn register_network_api(linker: &mut Linker<SharedState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_udp_send_to",
+        #[allow(unused_mut)]
         |mut caller: Caller<'_, SharedState>, fd: i32, data_ptr: i32, data_len: i32, target_ptr: i32, target_len: i32| -> i32 {
             let Ok(bytes) = read_bytes_from_mem(&mut caller, data_ptr, data_len) else { return -1; };
             let Ok(target) = read_str_from_mem(&mut caller, target_ptr, target_len) else { return -1; };

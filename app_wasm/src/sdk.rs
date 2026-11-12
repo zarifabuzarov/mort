@@ -1,9 +1,50 @@
 #![allow(dead_code)]
 // use std::str;
 
+#[macro_export]
+macro_rules! host_imports {
+    ($mod:literal, $($item:item)*) => {
+        #[link(wasm_import_module = $mod)]
+        extern "C" {
+            $($item)*
+        }
+    };
+    ($($item:item)*) => {
+        host_imports!("env", $($item)*);
+    };
+}
+
+#[macro_export]
+macro_rules! start {
+    ($($body:tt)*) => {
+        #[no_mangle]
+        pub extern "C" fn start() {
+            $($body)*
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! try_start {
+    ($($body:tt)*) => {
+        #[no_mangle]
+        pub extern "C" fn start() -> i32 {
+            match (|| -> Result<(), Box<dyn std::error::Error>> {
+                $($body)*
+                Ok(())
+            })() {
+                Ok(()) => 0,
+                Err(e) => {
+                    console::eprintln!("fatal: {e}");
+                    1
+                }
+            }
+        }
+    };
+}
+
 pub mod files {
-    #[link(wasm_import_module = "env")]
-    extern "C" {
+    host_imports! {
         fn host_open_file(path_ptr: *const u8, path_len: usize, mode: i32) -> i32;
         fn host_read_file(fd: i32, buf_ptr: *mut u8, buf_len: usize) -> i32;
         fn host_write_file(fd: i32, data_ptr: *const u8, data_len: usize) -> i32;
@@ -192,8 +233,7 @@ pub mod files {
 }
 
 pub mod console {
-    #[link(wasm_import_module = "env")]
-    extern "C" {
+    host_imports! {
         fn host_print(ptr: *const u8, len: usize);
         fn host_print_err(ptr: *const u8, len: usize);
         fn host_read_line(out_ptr: *mut u8, max_len: usize) -> i32;
@@ -268,8 +308,7 @@ pub mod console {
 }
 
 pub mod system {
-    #[link(wasm_import_module = "env")]
-    extern "C" {
+    host_imports! {
         fn host_get_pid() -> u32;
         fn host_exit(code: i32) -> !;
         fn host_cpu_count() -> u32;
@@ -327,8 +366,7 @@ pub mod system {
 }
 
 pub mod crypto {
-    #[link(wasm_import_module = "env")]
-    extern "C" {
+    host_imports! {
         fn host_random_u32() -> u32;
         fn host_random_bytes(out_ptr: *mut u8, len: usize) -> i32;
         fn host_hash(
@@ -367,8 +405,7 @@ pub mod crypto {
 }
 
 pub mod time {
-    #[link(wasm_import_module = "env")]
-    extern "C" {
+    host_imports! {
         fn host_sleep(mls: u64);
         fn host_now_unix() -> u64;
         fn host_now_millis() -> u64;
@@ -397,8 +434,7 @@ pub mod time {
 }
 
 pub mod vars {
-    #[link(wasm_import_module = "env")]
-    extern "C" {
+    host_imports! {
         fn host_get_env_len(key_ptr: *const u8, key_len: usize) -> u32;
         fn host_get_env(key_ptr: *const u8, key_len: usize, out_ptr: *mut u8, out_max_len: usize) -> u32;
     }
@@ -432,8 +468,7 @@ pub mod vars {
 }
 
 pub mod network {
-    #[link(wasm_import_module = "env")]
-    extern "C" {
+    host_imports! {
         fn host_http_request(
                 method_ptr: *const u8, method_len: usize,
                 url_ptr: *const u8, url_len: usize,
@@ -610,8 +645,7 @@ pub mod network {
 }
 
 pub mod media {
-    #[link(wasm_import_module = "env")]
-    extern "C" {
+    host_imports! {
         fn host_image_info(img_ptr: *const u8, img_len: usize, out_w: *mut u32, out_h: *mut u32) -> i32;
         fn host_decode_image(img_ptr: *const u8, img_len: usize, out_rgba_ptr: *mut u8, max_len: usize) -> i32;
         fn host_encode_image(
