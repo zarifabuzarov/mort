@@ -15,11 +15,29 @@ pub fn register_network_api(linker: &mut Linker<SharedState>) -> Result<()> {
          out_ptr: i32, max_len: i32,
          status_out_ptr: i32| -> i32 {
 
-            let Ok(method) = read_str_from_mem(&mut caller, method_ptr, method_len) else { return -1; };
-            let Ok(url) = read_str_from_mem(&mut caller, url_ptr, url_len) else { return -1; };
+            let method = match read_str_from_mem(&mut caller, method_ptr, method_len) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("host_http_request: method: {e}");
+                    return -1;
+                }
+            };
+            let url = match read_str_from_mem(&mut caller, url_ptr, url_len) {
+                Ok(u) => u,
+                Err(e) => {
+                    eprintln!("host_http_request: url: {e}");
+                    return -1;
+                }
+            };
 
             let body_bytes = if body_len > 0 {
-                let Ok(body_str) = read_str_from_mem(&mut caller, body_ptr, body_len) else { return -1; };
+                let body_str = match read_str_from_mem(&mut caller, body_ptr, body_len) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("host_http_request: body: {e}");
+                        return -1;
+                    }
+                };
                 body_str.into_bytes()
             } else {
                 Vec::new()
@@ -37,11 +55,15 @@ pub fn register_network_api(linker: &mut Linker<SharedState>) -> Result<()> {
             let (status, mut reader) = match response_result {
                 Ok(resp) => (resp.status() as i32, resp.into_reader()),
                 Err(ureq::Error::Status(code, resp)) => (code as i32, resp.into_reader()),
-                Err(_) => return -1,
+                Err(e) => {
+                    eprintln!("host_http_request: request failed: {e}");
+                    return -1;
+                },
             };
 
             let status_bytes = status.to_le_bytes();
-            if write_bytes_to_mem(&mut caller, status_out_ptr, &status_bytes).is_err() {
+            if let Err(e) = write_bytes_to_mem(&mut caller, status_out_ptr, &status_bytes) {
+                eprintln!("host_http_request: status write: {e}");
                 return -1;
             }
 
@@ -52,7 +74,14 @@ pub fn register_network_api(linker: &mut Linker<SharedState>) -> Result<()> {
 
             match read_result {
                 Ok(Ok(n)) => n as i32,
-                _ => -1,
+                Ok(Err(e)) => {
+                    eprintln!("host_http_request: read body: {e}");
+                    -1
+                }
+                Err(e) => {
+                    eprintln!("host_http_request: {e}");
+                    -1
+                }
             }
         },
     )?;
@@ -62,8 +91,20 @@ pub fn register_network_api(linker: &mut Linker<SharedState>) -> Result<()> {
         "env",
         "host_tcp_connect",
         |mut caller: Caller<'_, SharedState>, addr_ptr: i32, addr_len: i32| -> i32 {
-            let Ok(addr) = read_str_from_mem(&mut caller, addr_ptr, addr_len) else { return -1; };
-            let Ok(stream) = TcpStream::connect(addr) else { return -1; };
+            let addr = match read_str_from_mem(&mut caller, addr_ptr, addr_len) {
+                Ok(a) => a,
+                Err(e) => {
+                    eprintln!("host_tcp_connect: addr: {e}");
+                    return -1;
+                }
+            };
+            let stream = match TcpStream::connect(&addr) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("host_tcp_connect: connect to '{addr}': {e}");
+                    return -1;
+                }
+            };
 
             let mut state = caller.data().lock().unwrap();
             let fd = state.next_net_fd;
@@ -78,8 +119,20 @@ pub fn register_network_api(linker: &mut Linker<SharedState>) -> Result<()> {
         "env",
         "host_tcp_listen",
         |mut caller: Caller<'_, SharedState>, addr_ptr: i32, addr_len: i32| -> i32 {
-            let Ok(addr) = read_str_from_mem(&mut caller, addr_ptr, addr_len) else { return -1; };
-            let Ok(listener) = TcpListener::bind(addr) else { return -1; };
+            let addr = match read_str_from_mem(&mut caller, addr_ptr, addr_len) {
+                Ok(a) => a,
+                Err(e) => {
+                    eprintln!("host_tcp_listen: addr: {e}");
+                    return -1;
+                }
+            };
+            let listener = match TcpListener::bind(&addr) {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("host_tcp_listen: bind '{addr}': {e}");
+                    return -1;
+                }
+            };
 
             let mut state = caller.data().lock().unwrap();
             let fd = state.next_net_fd;
@@ -96,9 +149,17 @@ pub fn register_network_api(linker: &mut Linker<SharedState>) -> Result<()> {
         #[allow(unused_mut)]
         |mut caller: Caller<'_, SharedState>, server_fd: i32| -> i32 {
             let mut state = caller.data().lock().unwrap();
-            let Some(listener) = state.tcp_listeners.get(&server_fd) else { return -1; };
-
-            let Ok((stream, _)) = listener.accept() else { return -1; };
+            let Some(listener) = state.tcp_listeners.get(&server_fd) else {
+                eprintln!("host_tcp_accept: invalid fd {server_fd}");
+                return -1;
+            };
+            let (stream, _) = match listener.accept() {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("host_tcp_accept: accept: {e}");
+                    return -1;
+                }
+            };
 
             let fd = state.next_net_fd;
             state.next_net_fd += 1;
@@ -112,11 +173,25 @@ pub fn register_network_api(linker: &mut Linker<SharedState>) -> Result<()> {
         "env",
         "host_tcp_send",
         |mut caller: Caller<'_, SharedState>, fd: i32, data_ptr: i32, data_len: i32| -> i32 {
-            let Ok(bytes) = read_bytes_from_mem(&mut caller, data_ptr, data_len) else { return -1; };
+            let bytes = match read_bytes_from_mem(&mut caller, data_ptr, data_len) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("host_tcp_send: data: {e}");
+                    return -1;
+                }
+            };
             let mut state = caller.data().lock().unwrap();
-            let Some(stream) = state.tcp_streams.get_mut(&fd) else { return -1; };
-
-            stream.write(&bytes).map(|n| n as i32).unwrap_or(-1)
+            let Some(stream) = state.tcp_streams.get_mut(&fd) else {
+                eprintln!("host_tcp_send: invalid fd {fd}");
+                return -1;
+            };
+            match stream.write(&bytes) {
+                Ok(n) => n as i32,
+                Err(e) => {
+                    eprintln!("host_tcp_send: write: {e}");
+                    -1
+                }
+            }
         },
     )?;
 
@@ -127,20 +202,30 @@ pub fn register_network_api(linker: &mut Linker<SharedState>) -> Result<()> {
         |mut caller: Caller<'_, SharedState>, fd: i32, buf_ptr: i32, max_len: i32| -> i32 {
             let mut stream = match caller.data_mut().lock().unwrap().tcp_streams.remove(&fd) {
                 Some(s) => s,
-                None => return -1,
+                None => {
+                    eprintln!("host_tcp_recv: invalid fd {fd}");
+                    return -1;
+                }
             };
 
             let read_res = with_mem_slice_mut(&mut caller, buf_ptr, max_len, |buf| {
                 stream.read(buf)
             });
 
-            let bytes_read = match read_res {
-                Ok(Ok(n)) => n as i32,
-                _ => -1,
-            };
-
+            // ВСЕГДА возвращаем stream обратно, даже при ошибке
             caller.data_mut().lock().unwrap().tcp_streams.insert(fd, stream);
-            bytes_read
+
+            match read_res {
+                Ok(Ok(n)) => n as i32,
+                Ok(Err(e)) => {
+                    eprintln!("host_tcp_recv: read: {e}");
+                    -1
+                }
+                Err(e) => {
+                    eprintln!("host_tcp_recv: {e}");
+                    -1
+                }
+            }
         },
     )?;
 
@@ -154,6 +239,7 @@ pub fn register_network_api(linker: &mut Linker<SharedState>) -> Result<()> {
             if state.tcp_streams.remove(&fd).is_some() || state.tcp_listeners.remove(&fd).is_some() {
                 0
             } else {
+                eprintln!("host_tcp_close: invalid fd {fd}");
                 -1
             }
         },
@@ -164,8 +250,20 @@ pub fn register_network_api(linker: &mut Linker<SharedState>) -> Result<()> {
         "env",
         "host_udp_bind",
         |mut caller: Caller<'_, SharedState>, addr_ptr: i32, addr_len: i32| -> i32 {
-            let Ok(addr) = read_str_from_mem(&mut caller, addr_ptr, addr_len) else { return -1; };
-            let Ok(sock) = UdpSocket::bind(addr) else { return -1; };
+            let addr = match read_str_from_mem(&mut caller, addr_ptr, addr_len) {
+                Ok(a) => a,
+                Err(e) => {
+                    eprintln!("host_udp_bind: addr: {e}");
+                    return -1;
+                }
+            };
+            let sock = match UdpSocket::bind(&addr) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("host_udp_bind: bind '{addr}': {e}");
+                    return -1;
+                }
+            };
 
             let mut state = caller.data().lock().unwrap();
             let fd = state.next_net_fd;
@@ -181,13 +279,33 @@ pub fn register_network_api(linker: &mut Linker<SharedState>) -> Result<()> {
         "host_udp_send_to",
         #[allow(unused_mut)]
         |mut caller: Caller<'_, SharedState>, fd: i32, data_ptr: i32, data_len: i32, target_ptr: i32, target_len: i32| -> i32 {
-            let Ok(bytes) = read_bytes_from_mem(&mut caller, data_ptr, data_len) else { return -1; };
-            let Ok(target) = read_str_from_mem(&mut caller, target_ptr, target_len) else { return -1; };
 
+            let bytes = match read_bytes_from_mem(&mut caller, data_ptr, data_len) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("host_udp_send_to: data: {e}");
+                    return -1;
+                }
+            };
+            let target = match read_str_from_mem(&mut caller, target_ptr, target_len) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("host_udp_send_to: target: {e}");
+                    return -1;
+                }
+            };
             let mut state = caller.data().lock().unwrap();
-            let Some(sock) = state.udp_sockets.get(&fd) else { return -1; };
-
-            sock.send_to(&bytes, target).map(|n| n as i32).unwrap_or(-1)
+            let Some(sock) = state.udp_sockets.get(&fd) else {
+                eprintln!("host_udp_send_to: invalid fd {fd}");
+                return -1;
+            };
+            match sock.send_to(&bytes, &target) {
+                Ok(n) => n as i32,
+                Err(e) => {
+                    eprintln!("host_udp_send_to: send_to '{target}': {e}");
+                    -1
+                }
+            }
         },
     )?;
 
@@ -198,29 +316,37 @@ pub fn register_network_api(linker: &mut Linker<SharedState>) -> Result<()> {
         |mut caller: Caller<'_, SharedState>, fd: i32, buf_ptr: i32, max_len: i32, sender_ptr: i32, sender_max_len: i32| -> i32 {
             let sock = match caller.data_mut().lock().unwrap().udp_sockets.remove(&fd) {
                 Some(s) => s,
-                None => return -1,
+                None => {
+                    eprintln!("host_udp_recv_from: invalid fd {fd}");
+                    return -1;
+                }
             };
 
             let mut temp_buf = vec![0u8; max_len as usize];
             match sock.recv_from(&mut temp_buf) {
                 Ok((n, src)) => {
-                    caller.data_mut().lock().unwrap().udp_sockets.insert(fd, sock);
-
-                    // Записываем полученные данные в буфер WASM
-                    if write_bytes_to_mem(&mut caller, buf_ptr, &temp_buf[..n]).is_err() {
+                    // Сначала пишем данные в память WASM (sock ещё в руках)
+                    if let Err(e) = write_bytes_to_mem(&mut caller, buf_ptr, &temp_buf[..n]) {
+                        eprintln!("host_udp_recv_from: write data: {e}");
+                        caller.data_mut().lock().unwrap().udp_sockets.insert(fd, sock);
                         return -1;
                     }
 
-                    // Записываем адрес отправителя в буфер
+                    // Записываем адрес отправителя
                     let src_bytes = src.to_string().into_bytes();
                     if src_bytes.len() <= sender_max_len as usize {
-                        let _ = write_bytes_to_mem(&mut caller, sender_ptr, &src_bytes);
+                        if let Err(e) = write_bytes_to_mem(&mut caller, sender_ptr, &src_bytes) {
+                            eprintln!("host_udp_recv_from: write sender: {e}");
+                        }
                     }
 
-                    // Упаковываем: верхние 16 бит — длина адреса, нижние 16 — кол-во байт
+                    // Возвращаем sock обратно ОДИН раз, после всех операций
+                    caller.data_mut().lock().unwrap().udp_sockets.insert(fd, sock);
+
                     ((src_bytes.len() as i32) << 16) | (n as i32 & 0xFFFF)
                 }
-                Err(_) => {
+                Err(e) => {
+                    eprintln!("host_udp_recv_from: recv_from: {e}");
                     caller.data_mut().lock().unwrap().udp_sockets.insert(fd, sock);
                     -1
                 }
@@ -233,7 +359,12 @@ pub fn register_network_api(linker: &mut Linker<SharedState>) -> Result<()> {
         "env",
         "host_udp_close",
         |mut caller: Caller<'_, SharedState>, fd: i32| -> i32 {
-            if caller.data_mut().lock().unwrap().udp_sockets.remove(&fd).is_some() { 0 } else { -1 }
+            if caller.data_mut().lock().unwrap().udp_sockets.remove(&fd).is_some() {
+                0
+            } else {
+                eprintln!("host_udp_close: invalid fd {fd}");
+                -1
+            }
         },
     )?;
 
